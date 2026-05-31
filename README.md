@@ -52,10 +52,10 @@ Each agent is a focused Claude API call with a scoped system prompt. No agent kn
 |---|---|
 | Agent Framework | LangGraph |
 | LLM | Claude (Anthropic API) |
-| Backend / Approval API | FastAPI *(in progress)* |
-| State Persistence | Redis *(in progress)* |
-| Database | PostgreSQL *(in progress)* |
-| Observability | Prometheus + Grafana *(planned)* |
+| Backend / Approval API | FastAPI |
+| State Persistence | Redis |
+| Database | PostgreSQL |
+| Observability | Prometheus + Grafana |
 | Infrastructure | Docker |
 | Tracing | OpenTelemetry *(planned)* |
 
@@ -95,16 +95,31 @@ cd multi-agent-infra-recovery
 
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install langgraph langchain-anthropic python-dotenv
+pip install -r requirements.txt
 ```
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root (see `.env.example`):
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
+REDIS_URL=redis://localhost:6380
+POSTGRES_PORT=5434
 ```
 
-Run a simulated recovery:
+Start infrastructure and the API:
+
+```powershell
+docker compose up -d
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Apply the database schema once (first run):
+
+```powershell
+docker exec -i agenticaiproject-postgres-1 psql -U admin -d infra_ops < db/schema.sql
+```
+
+Run a simulated recovery (CLI, no API):
 
 ```bash
 python main.py pipeline_crash    # database unreachable
@@ -127,6 +142,22 @@ Three failure types are currently simulated:
 
 ---
 
+## Observability
+
+Three layers work together:
+
+| Layer | Purpose | URL |
+|-------|---------|-----|
+| **HTML dashboard** | Human approval workflow + incident table + embedded Grafana charts | http://localhost:8000/ |
+| **Prometheus** | Time-series metrics (run rates, agent steps, latency) | http://localhost:9090 |
+| **Grafana** | Charts for API health + Postgres incident trends | http://localhost:3000 (admin / admin) |
+
+The FastAPI app exposes Prometheus metrics at `GET /metrics`. Prometheus scrapes it every 15 seconds via `host.docker.internal:8000` (API runs on the host, not in Docker). The main dashboard at `/` embeds key Grafana panels so you can see live metrics without writing PromQL — use **Open full Grafana** for deeper exploration.
+
+After starting the stack, run a recovery via `POST /run` and optionally approve/reject — counters like `infra_recovery_runs_total` and `infra_recovery_agent_steps_total` will appear in Prometheus and the **Agent Recovery — Metrics** Grafana dashboard.
+
+---
+
 ## Current Capabilities
 
 - Full 6-agent pipeline runs end-to-end on simulated failures
@@ -137,10 +168,10 @@ Three failure types are currently simulated:
 
 ## Roadmap
 
-- **Human approval API** — FastAPI endpoint to pause the graph on high-risk plans and resume after human decision via `POST /approve` or `POST /reject`
-- **State persistence** — Redis checkpointing so graph state survives between the pause and resume
-- **Persistent audit log** — PostgreSQL storage for all incident reports and agent reasoning
-- **Observability dashboard** — Grafana dashboard showing agent activity, incident history, and recovery outcomes in real time
+- Human approval API with Redis checkpointing (pause/resume via `/approve` and `/reject`)
+- Persistent audit log in PostgreSQL
+- Prometheus metrics + Grafana dashboards for agent activity and incident trends
+- HTML ops dashboard for approvals and incident history
 - **Additional failure scenarios** — disk full, memory exhaustion, replication lag
 
 ---

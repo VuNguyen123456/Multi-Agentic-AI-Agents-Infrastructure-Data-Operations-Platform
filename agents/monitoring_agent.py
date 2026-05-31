@@ -50,16 +50,24 @@ Your ONLY job is to look at pipeline metrics and logs and decide:
 3. Write a one-line human-readable summary.
 
 Failure types you must classify into (pick exactly one):
-- schema_drift     → columns missing, type mismatches, unexpected schema changes
-- latency_spike    → pipeline ran but was unusually slow or timed out
-- pipeline_crash   → pipeline could not start or connect, fatal errors, retries exhausted
+- schema_drift      → columns missing, type mismatches, unexpected schema changes
+- latency_spike     → pipeline ran but was unusually slow or timed out with partial data
+- pipeline_crash    → pipeline could not start or connect, fatal errors, retries exhausted
+- disk_full         → database or host ran out of disk space, writes rejected mid-run
+- out_of_memory     → worker process killed by OOM killer, memory limit exceeded
+- deadlock          → database deadlock detected, transactions aborted after retries
+- replication_lag   → read replica too far behind primary, data freshness SLA violated
+- data_quality      → source data corrupt: nulls, duplicates, or values failing validation
+
+Pick the most specific type that matches the logs. Do not collapse disk_full, out_of_memory,
+deadlock, replication_lag, or data_quality into schema_drift, latency_spike, or pipeline_crash.
 
 You must respond with ONLY a JSON object. No explanation, no markdown, no extra text.
 
 Response format:
 {
   "failure_detected": true or false,
-  "failure_type": "schema_drift" | "latency_spike" | "pipeline_crash" | null,
+  "failure_type": "schema_drift" | "latency_spike" | "pipeline_crash" | "disk_full" | "out_of_memory" | "deadlock" | "replication_lag" | "data_quality" | null,
   "failure_summary": "one sentence describing what happened" | null
 }
 
@@ -195,14 +203,14 @@ if __name__ == "__main__":
     # Pull in the simulator
     # Adjust path if running from project root vs agents/ directory
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from simulator.failure_sim import generate_failure
+    from simulator.failure_sim import generate_failure, list_scenarios
 
     print("=" * 50)
     print("Testing Monitoring Agent in isolation")
     print("=" * 50)
 
     # Test each scenario
-    for scenario in ["schema_drift", "latency_spike", "pipeline_crash"]:
+    for scenario in list_scenarios():
         print(f"\n--- Scenario: {scenario} ---")
         state = generate_failure(scenario)
         result = monitoring_agent(state)

@@ -8,13 +8,6 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 client = Anthropic()
 
-
-# ── THE PROMPT ─────────────────────────────────────────────────────────────────
-# Audit Agent sees the ENTIRE state — every field written by every agent.
-# Its job is to write a complete, structured incident report.
-# This is what an on-call engineer would read the next morning.
-# It also runs when Security REJECTS a plan — logging why nothing was executed.
-
 AUDIT_SYSTEM_PROMPT = """
 You are the Audit Agent in an autonomous infrastructure operations system.
 
@@ -56,19 +49,16 @@ def build_user_message(state: dict) -> str:
     Dumps the entire accumulated state into a structured summary for Claude.
     The Audit Agent gets more context than any other agent — it sees everything.
     """
-    # Format recovery plan
     plan_text = "Not generated"
     if state.get("recovery_plan"):
         plan_text = "\n".join(
             f"  {i+1}. {step}" for i, step in enumerate(state["recovery_plan"])
         )
 
-    # Format actions taken
     actions_text = "No actions executed"
     if state.get("actions_taken"):
         actions_text = "\n".join(f"  - {a}" for a in state["actions_taken"])
 
-    # Format errors
     errors_text = "None"
     if state.get("execution_errors"):
         errors_text = "\n".join(f"  - {e}" for e in state["execution_errors"])
@@ -133,6 +123,7 @@ def audit_agent(state: dict) -> dict:
 
     Reads:  everything — the entire accumulated state
     Writes: audit_log, completed_at
+    Also:   saves the full incident record to PostgreSQL
     """
     print(f"\n[Audit Agent] Writing incident report for: {state.get('pipeline_name')}")
 
@@ -150,7 +141,7 @@ def audit_agent(state: dict) -> dict:
     response_text = response.content[0].text
     print(f"[Audit Agent] Raw response: {response_text}")
 
-    result = parse_claude_response(response_text)
+    result       = parse_claude_response(response_text)
     completed_at = datetime.now().isoformat()
 
     # Pretty print the full report
@@ -168,10 +159,21 @@ def audit_agent(state: dict) -> dict:
     print(f"\nCompleted at: {completed_at}")
     print(f"{'='*50}\n")
 
-    # Store the full report as a JSON string in state
+    # ── Save to PostgreSQL ─────────────────────────────────────────────────────
+    # Wrapped in try/except so a DB failure never crashes the agent
+    try:
+        import sys
+        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from db.database import save_incident
+        thread_id   = state.get("thread_id")
+        incident_id = save_incident(state, result, thread_id=thread_id)
+        print(f"[Audit Agent] Incident persisted → PostgreSQL id: {incident_id}")
+    except Exception as e:
+        print(f"[Audit Agent] Warning: could not save to PostgreSQL: {e}")
+
     return {
-        "audit_log":    json.dumps(result, indent=2),
-        "completed_at": completed_at,
+        "audit_log":     json.dumps(result, indent=2),
+        "completed_at":  completed_at,
         "current_agent": "audit_agent"
     }
 

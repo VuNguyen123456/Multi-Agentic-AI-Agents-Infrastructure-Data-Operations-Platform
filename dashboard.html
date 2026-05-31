@@ -1,0 +1,1151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Infra Recovery Ops</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --surface2: #1a1a24;
+    --border: #2a2a3a;
+    --border2: #3a3a50;
+    --text: #e8e8f0;
+    --muted: #7070a0;
+    --dim: #404060;
+    --red: #ff4466;
+    --red-bg: rgba(255,68,102,0.08);
+    --red-border: rgba(255,68,102,0.25);
+    --green: #00e5a0;
+    --green-bg: rgba(0,229,160,0.08);
+    --green-border: rgba(0,229,160,0.25);
+    --yellow: #ffb800;
+    --yellow-bg: rgba(255,184,0,0.08);
+    --yellow-border: rgba(255,184,0,0.25);
+    --blue: #4488ff;
+    --blue-bg: rgba(68,136,255,0.08);
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Subtle grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.3;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 0 24px 60px; }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 28px 0 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 36px; height: 36px;
+    background: var(--red);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    box-shadow: 0 0 20px rgba(255,68,102,0.4);
+  }
+
+  .logo-text {
+    font-family: var(--sans);
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+
+  .logo-sub {
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: 1px;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .live-dot {
+    width: 7px; height: 7px;
+    background: var(--green);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+  }
+
+  .live-label { color: var(--green); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
+
+  /* ── STATS BAR ── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    transition: border-color 0.2s;
+  }
+
+  .stat:hover { border-color: var(--border2); }
+
+  .stat-val {
+    font-family: var(--sans);
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .stat-label { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .stat.red .stat-val { color: var(--red); }
+  .stat.green .stat-val { color: var(--green); }
+  .stat.yellow .stat-val { color: var(--yellow); }
+  .stat.blue .stat-val { color: var(--blue); }
+
+  /* ── SECTION HEADER ── */
+  .section-hd {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .section-title {
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ── RUN FORM ── */
+  .run-form {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 32px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .form-field { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 180px; }
+  .form-label { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+
+  select, input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 9px 12px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  select:focus, input:focus { border-color: var(--blue); }
+  select option { background: var(--bg); }
+
+  .btn {
+    padding: 10px 20px;
+    border-radius: 6px;
+    border: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .btn-primary { background: var(--blue); color: #fff; }
+  .btn-primary:hover { background: #5599ff; box-shadow: 0 0 16px rgba(68,136,255,0.35); }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .btn-approve { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+  .btn-approve:hover { background: var(--green); color: #000; box-shadow: 0 0 16px rgba(0,229,160,0.3); }
+
+  .btn-reject { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+  .btn-reject:hover { background: var(--red); color: #fff; box-shadow: 0 0 16px rgba(255,68,102,0.3); }
+
+  .btn-sm { padding: 6px 14px; font-size: 11px; }
+
+  /* ── INCIDENT CARDS ── */
+  .incidents { display: flex; flex-direction: column; gap: 10px; margin-bottom: 32px; }
+
+  .incident-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+    animation: slideIn 0.3s ease;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .incident-card.pending { border-left: 3px solid var(--red); }
+  .incident-card.resolved { border-left: 3px solid var(--green); }
+  .incident-card.failed { border-left: 3px solid var(--yellow); }
+
+  .incident-card:hover { border-color: var(--border2); }
+  .incident-card.pending:hover { border-color: var(--red-border); }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .card-left { display: flex; align-items: center; gap: 12px; }
+
+  .card-status {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .status-pending { background: var(--red); box-shadow: 0 0 8px var(--red); animation: pulse 1.5s ease-in-out infinite; }
+  .status-resolved { background: var(--green); }
+  .status-failed { background: var(--yellow); }
+  .status-running { background: var(--blue); box-shadow: 0 0 8px var(--blue); animation: pulse 1s ease-in-out infinite; }
+
+  .card-pipeline {
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .badge {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+
+  .badge-type { background: var(--surface2); color: var(--muted); }
+  .badge-pending { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+  .badge-resolved { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+  .badge-failed { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow-border); }
+  .badge-running { background: var(--blue-bg); color: var(--blue); }
+  .badge-processing { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(68,136,255,0.25); }
+
+  .decision-approved { color: var(--green); }
+  .decision-rejected { color: var(--red); }
+  .decision-auto { color: var(--blue); }
+  .decision-na { color: var(--dim); }
+
+  .badge-decision-approved { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+  .badge-decision-rejected { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+  .badge-decision-auto { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(68,136,255,0.25); }
+
+  .incident-card.processing { border-left: 3px solid var(--blue); }
+
+  .processing-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--blue);
+    padding: 8px 0;
+  }
+
+  .history-loading td {
+    text-align: center;
+    color: var(--muted);
+    padding: 20px 16px !important;
+    background: var(--surface2);
+  }
+
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .card-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .card-body {
+    border-top: 1px solid var(--border);
+    padding: 16px 18px;
+    display: none;
+  }
+
+  .card-body.open { display: block; }
+
+  .plan-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+  }
+
+  .plan-title {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .plan-step {
+    font-size: 12px;
+    color: var(--text);
+    padding: 3px 0;
+    display: flex;
+    gap: 8px;
+  }
+
+  .plan-step-num { color: var(--dim); flex-shrink: 0; }
+  .plan-step-text.danger { color: var(--red); }
+
+  .risk-box {
+    background: var(--red-bg);
+    border: 1px solid var(--red-border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--red);
+    margin-bottom: 14px;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .risk-icon { flex-shrink: 0; margin-top: 1px; }
+
+  .approval-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .notes-input {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  /* ── HISTORY TABLE ── */
+  .history {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+
+  th {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface2); }
+
+  .outcome-resolved { color: var(--green); }
+  .outcome-failed { color: var(--yellow); }
+  .outcome-requires_human { color: var(--red); }
+
+  /* ── TOAST ── */
+  .toast {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-size: 12px;
+    z-index: 100;
+    transform: translateY(80px);
+    opacity: 0;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    max-width: 320px;
+  }
+
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.success { border-color: var(--green-border); color: var(--green); }
+  .toast.error { border-color: var(--red-border); color: var(--red); }
+
+  /* ── EMPTY STATE ── */
+  .empty {
+    text-align: center;
+    padding: 48px 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 2;
+  }
+
+  .empty-icon { font-size: 32px; margin-bottom: 8px; }
+
+  /* ── SPINNER ── */
+  .spin {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid var(--border2);
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── GRAFANA EMBEDS ── */
+  .metrics-hint {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 14px;
+    line-height: 1.6;
+  }
+
+  .metrics-hint a { color: var(--blue); text-decoration: none; }
+  .metrics-hint a:hover { text-decoration: underline; }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+
+  .metric-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .metric-panel-label {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  .metric-panel iframe {
+    width: 100%;
+    border: none;
+    display: block;
+    background: #111118;
+  }
+
+  .metric-panel.stat iframe { height: 130px; }
+  .metric-panel.chart iframe { height: 240px; }
+  .metric-panel.wide { grid-column: 1 / -1; }
+
+  @media (max-width: 720px) {
+    .metrics-grid { grid-template-columns: 1fr; }
+    .metric-panel.wide { grid-column: auto; }
+  }
+
+  /* ── NATIVE METRIC BARS (from /metrics/summary) ── */
+  .native-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+
+  .native-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px 16px;
+  }
+
+  .native-card h3 {
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .native-card .sub {
+    font-size: 10px;
+    color: var(--dim);
+    margin-bottom: 12px;
+  }
+
+  .native-pending {
+    font-family: var(--sans);
+    font-size: 36px;
+    font-weight: 800;
+    color: var(--green);
+    line-height: 1.1;
+  }
+
+  .native-pending.warn { color: var(--red); }
+
+  .bar-row {
+    display: grid;
+    grid-template-columns: 110px 1fr 28px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 11px;
+  }
+
+  .bar-row:last-child { margin-bottom: 0; }
+
+  .bar-label {
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bar-track {
+    height: 8px;
+    background: var(--bg);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--blue);
+    min-width: 2px;
+    transition: width 0.4s ease;
+  }
+
+  .bar-fill.green { background: var(--green); }
+  .bar-fill.red { background: var(--red); }
+  .bar-fill.yellow { background: var(--yellow); }
+
+  .bar-val { text-align: right; color: var(--text); font-weight: 600; }
+
+  .native-empty {
+    font-size: 11px;
+    color: var(--dim);
+    padding: 8px 0;
+  }
+
+  @media (max-width: 720px) {
+    .native-metrics { grid-template-columns: 1fr; }
+    .bar-row { grid-template-columns: 90px 1fr 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <div>
+        <div class="logo-text">InfraOps Recovery</div>
+        <div class="logo-sub">Multi-Agent Autonomous System</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="live-dot"></div>
+      <div class="live-label">Live</div>
+    </div>
+  </header>
+
+  <!-- STATS -->
+  <div class="stats" id="stats">
+    <div class="stat blue"><div class="stat-val" id="stat-total">—</div><div class="stat-label">Total runs</div></div>
+    <div class="stat green"><div class="stat-val" id="stat-resolved">—</div><div class="stat-label">Resolved</div></div>
+    <div class="stat red"><div class="stat-val" id="stat-pending">—</div><div class="stat-label">Pending approval</div></div>
+    <div class="stat yellow"><div class="stat-val" id="stat-failed">—</div><div class="stat-label">Failed / partial</div></div>
+  </div>
+
+  <!-- LIVE METRICS -->
+  <div class="section-hd">
+    <div class="section-title">Live Metrics</div>
+  </div>
+  <p class="metrics-hint">
+    Live bars update from this API after each run (no PromQL).
+    <a href="#" id="grafana-link" target="_blank" rel="noopener">Open Grafana ↗</a> for advanced charts.
+  </p>
+  <div class="native-metrics" id="native-metrics">
+    <div class="native-card">
+      <h3>Waiting for your approval</h3>
+      <div class="sub">Right now</div>
+      <div class="native-pending" id="native-pending">—</div>
+    </div>
+    <div class="native-card">
+      <h3>Recovery runs</h3>
+      <div class="sub">Since API started</div>
+      <div id="native-runs"></div>
+    </div>
+    <div class="native-card">
+      <h3>Agent steps</h3>
+      <div class="sub">Each LangGraph node execution</div>
+      <div id="native-agents"></div>
+    </div>
+    <div class="native-card">
+      <h3>Human decisions</h3>
+      <div class="sub">Approve / reject clicks</div>
+      <div id="native-decisions"></div>
+    </div>
+    <div class="native-card">
+      <h3>Incident outcomes</h3>
+      <div class="sub">All time (Postgres)</div>
+      <div id="native-outcomes"></div>
+    </div>
+    <div class="native-card">
+      <h3>Failure types</h3>
+      <div class="sub">All time (Postgres)</div>
+      <div id="native-failures"></div>
+    </div>
+    <div class="native-card">
+      <h3>Approval mix</h3>
+      <div class="sub">All time (Postgres)</div>
+      <div id="native-approvals"></div>
+    </div>
+  </div>
+
+  <!-- RUN FORM -->
+  <div class="section-hd">
+    <div class="section-title">Trigger Recovery Run</div>
+  </div>
+  <div class="run-form">
+    <div class="form-field">
+      <label class="form-label">Failure Scenario</label>
+      <select id="scenario-select">
+        <option value="">— none —</option>
+        <option value="schema_drift">schema_drift</option>
+        <option value="latency_spike">latency_spike</option>
+        <option value="pipeline_crash">pipeline_crash</option>
+        <option value="disk_full">disk_full</option>
+        <option value="out_of_memory">out_of_memory</option>
+        <option value="deadlock">deadlock</option>
+        <option value="replication_lag">replication_lag</option>
+        <option value="data_quality">data_quality</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" id="run-btn" onclick="triggerRun()">▶ Run Agent Pipeline</button>
+  </div>
+
+  <!-- ACTIVE / PENDING -->
+  <div class="section-hd">
+    <div class="section-title">Active Incidents</div>
+    <div style="font-size:11px;color:var(--muted)" id="refresh-label">auto-refreshes every 5s</div>
+  </div>
+  <div class="incidents" id="active-list">
+    <div class="empty"><div class="empty-icon">📭</div>No active incidents.<br>Trigger a run above to start.</div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="section-hd" style="margin-top:32px">
+    <div class="section-title">Incident History</div>
+    <button class="btn btn-sm" style="background:var(--surface);border:1px solid var(--border);color:var(--muted)" onclick="loadHistory()">↺ Refresh</button>
+  </div>
+  <div class="history">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Pipeline</th>
+          <th>Failure</th>
+          <th>Risk</th>
+          <th>Decision</th>
+          <th>Outcome</th>
+          <th>Completed</th>
+        </tr>
+      </thead>
+      <tbody id="history-body">
+        <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">Loading history...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+const API = window.location.origin;
+const GRAFANA = 'http://localhost:3000';
+let activeRuns = {};   // thread_id → run data
+let historyLoading = false;
+let pendingHistoryThreadId = null;
+
+// ── TOAST ──────────────────────────────────────────────────────────────────────
+function toast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast ${type} show`;
+  setTimeout(() => { el.className = 'toast'; }, 3500);
+}
+
+// ── TRIGGER RUN ────────────────────────────────────────────────────────────────
+async function triggerRun() {
+  const btn      = document.getElementById('run-btn');
+  const scenario = document.getElementById('scenario-select').value || null;
+  btn.disabled   = true;
+  btn.innerHTML  = '<span class="spin"></span>Starting...';
+
+  try {
+    const res  = await fetch(`${API}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario })
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      toast(data.detail || `Run failed (${res.status})`, 'error');
+      return;
+    }
+
+    if (data.thread_id) {
+      activeRuns[data.thread_id] = data;
+      renderActive();
+      toast(`Run started → ${data.pipeline || 'pipeline'}`, 'success');
+
+      loadMetricsSummary();
+
+      if (data.status === 'completed') {
+        setTimeout(() => {
+          delete activeRuns[data.thread_id];
+          renderActive();
+          loadHistory();
+          loadStats();
+          loadMetricsSummary();
+        }, 4000);
+      }
+    }
+  } catch(e) {
+    toast('Could not reach API — is the server running?', 'error');
+  }
+
+  btn.disabled  = false;
+  btn.innerHTML = '▶ Run Agent Pipeline';
+}
+
+// ── APPROVE / REJECT ──────────────────────────────────────────────────────────
+async function decide(thread_id, approved) {
+  const run = activeRuns[thread_id];
+  if (!run || run.status === 'processing') return;
+
+  const notesEl = document.getElementById(`notes-${thread_id}`);
+  const notes   = notesEl ? notesEl.value : '';
+  const action  = approved ? 'approve' : 'reject';
+
+  run.status = 'processing';
+  run._decision = approved ? 'approved' : 'rejected';
+  renderActive();
+
+  try {
+    const res  = await fetch(`${API}/${action}/${thread_id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes })
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      run.status = 'pending_approval';
+      run._decision = null;
+      renderActive();
+      toast(data.detail || `Decision failed (${res.status})`, 'error');
+      return;
+    }
+
+    toast(
+      approved
+        ? `Approved — execution ${data.execution_status || 'complete'}`
+        : `Rejected — incident logged`,
+      approved ? 'success' : 'error'
+    );
+
+    run.status = 'completed';
+    renderActive();
+
+    pendingHistoryThreadId = thread_id;
+    historyLoading = true;
+    renderHistory(await fetchIncidents());
+
+    const found = await waitForIncidentInHistory(thread_id, run);
+    historyLoading = false;
+    pendingHistoryThreadId = null;
+
+    delete activeRuns[thread_id];
+    renderActive();
+    await loadStats();
+    loadMetricsSummary();
+
+    if (!found) {
+      toast('Run finished — refresh history if the row is missing', 'error');
+    }
+
+  } catch(e) {
+    if (activeRuns[thread_id]) {
+      activeRuns[thread_id].status = 'pending_approval';
+      activeRuns[thread_id]._decision = null;
+    }
+    historyLoading = false;
+    pendingHistoryThreadId = null;
+    renderActive();
+    await loadHistory();
+    toast('API error during decision', 'error');
+  }
+}
+
+async function waitForIncidentInHistory(thread_id, run, attempts = 15, delayMs = 1500) {
+  const baseline = await fetchIncidents();
+  const baselineCount = baseline.length;
+  const pipeline = run.pipeline || run.pipeline_name;
+
+  for (let i = 0; i < attempts; i++) {
+    const data = await fetchIncidents();
+    renderHistory(data);
+
+    const match = data.find(inc => {
+      if (inc.thread_id && inc.thread_id === thread_id) return true;
+      if (inc.pipeline_name !== pipeline) return false;
+      if (run._decision === 'approved' && inc.human_approved === true) return true;
+      if (run._decision === 'rejected' && inc.human_approved === false) return true;
+      return false;
+    });
+
+    if (match || data.length > baselineCount) {
+      renderHistory(data);
+      return true;
+    }
+
+    await sleep(delayMs);
+  }
+  await loadHistory();
+  return false;
+}
+
+// ── RENDER ACTIVE INCIDENTS ───────────────────────────────────────────────────
+function renderActive() {
+  const el   = document.getElementById('active-list');
+  const runs = Object.values(activeRuns);
+
+  // Update pending stat
+  const pending = runs.filter(r => r.status === 'pending_approval').length;
+  document.getElementById('stat-pending').textContent = pending;
+
+  if (!runs.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">📭</div>No active incidents.<br>Trigger a run above to start.</div>`;
+    return;
+  }
+
+  el.innerHTML = runs.map(run => {
+    const isPending    = run.status === 'pending_approval';
+    const isProcessing = run.status === 'processing';
+    const isCompleted  = run.status === 'completed';
+    const cardClass    = isPending ? 'pending'
+      : isProcessing ? 'processing'
+      : isCompleted ? (run._decision === 'rejected' ? 'failed' : 'resolved')
+      : '';
+    const statusClass  = isPending ? 'status-pending'
+      : isProcessing ? 'status-running'
+      : isCompleted ? 'status-resolved'
+      : 'status-running';
+    const badgeClass   = isPending ? 'badge-pending'
+      : isProcessing ? 'badge-processing'
+      : 'badge-resolved';
+    const badgeText    = isPending ? 'awaiting approval'
+      : isProcessing ? 'processing'
+      : isCompleted ? (run._decision === 'approved' ? 'approved' : run._decision === 'rejected' ? 'rejected' : 'completed')
+      : 'running';
+
+    const planHtml = (run.recovery_plan || []).map((step, i) => {
+      const isDanger = /alter|delete|drop|restart|terminate|truncate/i.test(step);
+      return `<div class="plan-step">
+        <span class="plan-step-num">${i+1}.</span>
+        <span class="plan-step-text ${isDanger ? 'danger' : ''}">${escHtml(step)}</span>
+      </div>`;
+    }).join('');
+
+    const riskHtml = run.risk_reason ? `
+      <div class="risk-box">
+        <span class="risk-icon">⚠</span>
+        <span>${escHtml(run.risk_reason)}</span>
+      </div>` : '';
+
+    const actionsHtml = isPending ? `
+      <div class="approval-actions">
+        <input id="notes-${run.thread_id}" class="notes-input" placeholder="Optional notes for the audit log..." />
+        <button class="btn btn-approve btn-sm" onclick="decide('${run.thread_id}', true)">Approve</button>
+        <button class="btn btn-reject btn-sm" onclick="decide('${run.thread_id}', false)">Reject</button>
+      </div>` : isProcessing ? `
+      <div class="processing-box">
+        <span class="spin"></span>
+        <span>${run._decision === 'approved'
+          ? 'Approved — running execution, audit agent, and saving to history...'
+          : 'Rejected — writing audit log and saving to history...'}</span>
+      </div>` : `<div style="font-size:11px;color:var(--muted)">
+        ${isCompleted ? 'Decision recorded — syncing history...' : '<span class="spin"></span>Processing...'}
+      </div>`;
+
+    return `
+    <div class="incident-card ${cardClass}">
+      <div class="card-header" onclick="toggleCard('${run.thread_id}')">
+        <div class="card-left">
+          <div class="card-status ${statusClass}"></div>
+          <div class="card-pipeline">${escHtml(run.pipeline || run.pipeline_name || '—')}</div>
+          <span class="badge badge-type">${escHtml(run.failure_type || '—')}</span>
+          <span class="badge ${badgeClass}">${badgeText}</span>
+        </div>
+        <div class="card-right">
+          <span style="color:var(--red);font-size:11px">${run.risk_level === 'high' ? '⚠ HIGH RISK' : ''}</span>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--dim)">${run.thread_id.substring(0,8)}...</span>
+          <span>▾</span>
+        </div>
+      </div>
+      <div class="card-body ${isPending ? 'open' : ''}" id="body-${run.thread_id}">
+        ${riskHtml}
+        ${planHtml ? `<div class="plan-box"><div class="plan-title">Recovery Plan</div>${planHtml}</div>` : ''}
+        ${actionsHtml}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleCard(id) {
+  const body = document.getElementById(`body-${id}`);
+  if (body) body.classList.toggle('open');
+}
+
+// ── HISTORY TABLE ─────────────────────────────────────────────────────────────
+async function fetchIncidents() {
+  const res = await fetch(`${API}/incidents`);
+  if (!res.ok) throw new Error('Failed to load incidents');
+  return res.json();
+}
+
+function formatDecision(inc) {
+  if (inc.human_approved === true) {
+    return { label: 'Approved', badge: 'badge-decision-approved', textClass: 'decision-approved' };
+  }
+  if (inc.human_approved === false) {
+    return { label: 'Rejected', badge: 'badge-decision-rejected', textClass: 'decision-rejected' };
+  }
+  if (inc.approved === true) {
+    return { label: 'Auto', badge: 'badge-decision-auto', textClass: 'decision-auto' };
+  }
+  return { label: '—', badge: '', textClass: 'decision-na' };
+}
+
+function renderHistory(data) {
+  const tbody = document.getElementById('history-body');
+  const loadingRow = historyLoading ? `
+    <tr class="history-loading">
+      <td colspan="7"><span class="spin"></span> Saving incident to history...</td>
+    </tr>` : '';
+
+  if (!data.length && !historyLoading) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">No incidents recorded yet</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = loadingRow + data.map(inc => {
+    const decision = formatDecision(inc);
+    const decisionBadge = decision.badge
+      ? `<span class="badge ${decision.badge}">${decision.label}</span>`
+      : `<span class="${decision.textClass}">${decision.label}</span>`;
+    const highlight = pendingHistoryThreadId && inc.thread_id === pendingHistoryThreadId
+      ? ' style="background:var(--surface2)"'
+      : '';
+
+    return `
+      <tr${highlight}>
+        <td style="color:var(--dim)">#${inc.id}</td>
+        <td>${escHtml(inc.pipeline_name)}</td>
+        <td><span class="badge badge-type">${escHtml(inc.failure_type)}</span></td>
+        <td style="color:${inc.risk_level === 'high' ? 'var(--red)' : 'var(--green)'}">${inc.risk_level || '—'}</td>
+        <td>${decisionBadge}</td>
+        <td class="outcome-${inc.outcome}">${inc.outcome || '—'}</td>
+        <td style="color:var(--muted)">${inc.created_at ? new Date(inc.created_at).toLocaleString() : '—'}</td>
+      </tr>`;
+  }).join('');
+}
+
+async function loadHistory() {
+  try {
+    renderHistory(await fetchIncidents());
+  } catch(e) {
+    document.getElementById('history-body').innerHTML =
+      `<tr><td colspan="7" style="text-align:center;color:var(--red);padding:32px">Could not load history</td></tr>`;
+  }
+}
+
+// ── STATS ─────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const res  = await fetch(`${API}/stats`);
+    const data = await res.json();
+    document.getElementById('stat-total').textContent    = data.total    ?? '—';
+    document.getElementById('stat-resolved').textContent = data.resolved  ?? '—';
+    document.getElementById('stat-failed').textContent   = (data.failed ?? 0);
+  } catch(e) {}
+}
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
+function escHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+const BAR_COLORS = {
+  completed: 'green',
+  pending_approval: 'yellow',
+  error: 'red',
+  approved: 'green',
+  rejected: 'red',
+  resolved: 'green',
+  failed: 'yellow',
+  requires_human: 'red',
+};
+
+function renderBarGroup(containerId, data, emptyMsg) {
+  const el = document.getElementById(containerId);
+  const entries = Object.entries(data || {}).filter(([, v]) => v > 0);
+  if (!entries.length) {
+    el.innerHTML = `<div class="native-empty">${emptyMsg}</div>`;
+    return;
+  }
+  const max = Math.max(...entries.map(([, v]) => v), 1);
+  el.innerHTML = entries.map(([label, val]) => {
+    const pct = Math.round((val / max) * 100);
+    const color = BAR_COLORS[label] || '';
+    return `<div class="bar-row">
+      <span class="bar-label" title="${escHtml(label)}">${escHtml(label)}</span>
+      <div class="bar-track"><div class="bar-fill ${color}" style="width:${pct}%"></div></div>
+      <span class="bar-val">${val}</span>
+    </div>`;
+  }).join('');
+}
+
+async function loadMetricsSummary() {
+  try {
+    const res  = await fetch(`${API}/metrics/summary`);
+    const data = await res.json();
+    const live = data.live || {};
+    const hist = data.history || {};
+
+    const pending = live.pending_approvals ?? 0;
+    const pendingEl = document.getElementById('native-pending');
+    pendingEl.textContent = pending;
+    pendingEl.className = 'native-pending' + (pending > 0 ? ' warn' : '');
+
+    renderBarGroup('native-runs', live.runs_by_status, 'No runs yet — click Run Agent Pipeline');
+    renderBarGroup('native-agents', live.agent_steps, 'No agent steps yet — run a pipeline');
+    renderBarGroup('native-decisions', live.human_decisions, 'No approve/reject yet');
+    renderBarGroup('native-outcomes', hist.outcomes, 'No incidents in database');
+    renderBarGroup('native-failures', hist.failure_types, 'No failure types logged yet');
+    renderBarGroup('native-approvals', hist.approvals, 'No approval data yet');
+  } catch (e) {
+    ['native-runs','native-agents','native-decisions','native-outcomes','native-failures','native-approvals'].forEach(id => {
+      document.getElementById(id).innerHTML = '<div class="native-empty">Could not load metrics</div>';
+    });
+  }
+}
+
+function initGrafanaLink() {
+  const link = document.getElementById('grafana-link');
+  if (link) link.href = GRAFANA;
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+initGrafanaLink();
+loadMetricsSummary();
+loadHistory();
+loadStats();
+setInterval(() => { loadHistory(); loadStats(); loadMetricsSummary(); }, 5000);
+</script>
+</body>
+</html>

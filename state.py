@@ -10,6 +10,7 @@ class AgentState(TypedDict):
     # ── PIPELINE INPUT ─────────────────────────────────────────────────────────
     # Raw data injected by the simulator at startup.
     # The Monitoring Agent reads this to decide if something is wrong.
+    input_scenario: Optional[str]          # scenario key from failure_sim (e.g. disk_full)
     pipeline_name: str          # e.g. "etl_orders_pipeline"
     pipeline_metrics: dict      # latency, row counts, error rates, etc.
     raw_logs: List[str]         # last N log lines from the pipeline
@@ -18,7 +19,7 @@ class AgentState(TypedDict):
     # Written by the Monitoring Agent, read by the conditional edge router
     # to decide: go to Analysis, or stop (nothing wrong).
     failure_detected: bool                  # True = something is wrong
-    failure_type: Optional[str]             # "schema_drift" | "latency_spike" | "pipeline_crash"
+    failure_type: Optional[str]             # schema_drift | latency_spike | pipeline_crash | disk_full | ...
     failure_summary: Optional[str]          # One-line human-readable summary
 
     # ── ANALYSIS AGENT OUTPUT ─────────────────────────────────────────────────

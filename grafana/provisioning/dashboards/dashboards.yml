@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: infra-recovery
+    orgId: 1
+    folder: Infrastructure Recovery
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
