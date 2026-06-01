@@ -87,6 +87,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class RunRequest(BaseModel):
     scenario: str = None
+    source: str = "mock"  # "mock" | "azure"
 
 
 class ApprovalRequest(BaseModel):
@@ -131,21 +132,31 @@ def metric_scenario(request_scenario: str | None, state: dict) -> str:
     )
 
 
-# The /run endpoint starts a new recovery run.
-# It generates a unique thread_id, configures the graph with it,
-# and invokes the initial state. If the graph is paused (waiting for approval),
-# it returns a response with the pending status and thread_id.
-# Otherwise, it returns a response with the completed status and execution results.
 @app.post("/run")
 async def run_pipeline(request: RunRequest):
-    """Start a new recovery run. Returns thread_id for tracking."""
+    """
+    Start a new recovery run.
+    source="mock"  → failure_sim.py (default)
+    source="azure" → App Insights ingest
+    """
     graph         = app_state["graph"]
     thread_id     = str(uuid.uuid4())
     config        = {"configurable": {"thread_id": thread_id}}
-    initial_state = generate_failure(request.scenario)
     scenario_key  = request.scenario
 
-    print(f"\n[API] Starting run — thread_id: {thread_id}")
+    print(f"\n[API] Starting run — thread_id: {thread_id} source: {request.source}")
+
+    try:
+        if request.source == "azure":
+            from azure.ingest import ingest_from_azure
+            initial_state = ingest_from_azure()
+            print("[API] Ingested from Azure App Insights")
+        else:
+            initial_state = generate_failure(request.scenario)
+            print(f"[API] Using mock scenario: {request.scenario or 'random'}")
+    except Exception as e:
+        API_ERRORS_TOTAL.labels(endpoint="run").inc()
+        raise HTTPException(status_code=500, detail=f"Data source error: {str(e)}")
 
     try:
         result = tracked_invoke(graph, initial_state, config=config, endpoint="run")
@@ -173,7 +184,9 @@ async def run_pipeline(request: RunRequest):
             status="pending_approval",
         ).inc()
         PENDING_APPROVALS.inc()
-        return pending_approval_response(thread_id, values)
+        body = pending_approval_response(thread_id, values)
+        body["source"] = request.source
+        return body
 
     if not isinstance(result, dict):
         API_ERRORS_TOTAL.labels(endpoint="run").inc()
@@ -184,6 +197,7 @@ async def run_pipeline(request: RunRequest):
     return {
         "status":           "completed",
         "thread_id":        thread_id,
+        "source":           request.source,
         "pipeline":         result.get("pipeline_name"),
         "failure_type":     result.get("failure_type"),
         "execution_status": result.get("execution_status"),
@@ -191,9 +205,6 @@ async def run_pipeline(request: RunRequest):
     }
 
 
-# The /approve/{thread_id} endpoint is used to approve a high-risk recovery plan.
-# It checks if the run is waiting for approval, and if so, it resumes the graph
-# with the approved flag set to True and the human notes.
 @app.post("/approve/{thread_id}")
 async def approve_plan(thread_id: str, request: ApprovalRequest):
     """Human approves the high-risk plan. Graph resumes into execution."""
@@ -228,15 +239,27 @@ async def approve_plan(thread_id: str, request: ApprovalRequest):
         status="completed",
     ).inc()
 
+    azure_result = {}
+    try:
+        from azure.execute import trigger_remediation
+        azure_result = trigger_remediation(
+            result if isinstance(result, dict) else {},
+            thread_id=thread_id,
+            notes=request.notes,
+        )
+    except Exception as e:
+        print(f"[API] Azure Function call failed (non-fatal): {e}")
+        azure_result = {"status": "error", "detail": str(e)}
+
     return {
         "status":           "completed",
         "thread_id":        thread_id,
         "human_decision":   "approved",
-        "execution_status": result.get("execution_status"),
-        "actions_taken":    result.get("actions_taken"),
-        "completed_at":     result.get("completed_at"),
+        "execution_status": result.get("execution_status") if isinstance(result, dict) else None,
+        "actions_taken":    result.get("actions_taken") if isinstance(result, dict) else None,
+        "completed_at":     result.get("completed_at") if isinstance(result, dict) else None,
+        "azure_execute":    azure_result,
     }
-
 
 # The /reject/{thread_id} endpoint is used to reject a high-risk recovery plan.
 # It checks if the run is waiting for approval, and if so, it resumes the graph

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: infra-recovery-service
+  namespace: default
+spec:
+  # LoadBalancer exposes the service on localhost on Windows/Mac Docker Desktop
+  type: LoadBalancer
+  selector:
+    app: infra-recovery-api
+  ports:
+    - protocol: TCP
+      port: 8000          # external port you hit in the browser
+      targetPort: 8000    # port inside the container

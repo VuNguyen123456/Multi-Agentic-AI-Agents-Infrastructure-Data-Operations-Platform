@@ -1,0 +1,12 @@
+# Never include these in the Docker image
+venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+*.md
+docker-compose.yml
+k8s/
+.pytest_cache/

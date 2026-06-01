@@ -1,8 +1,8 @@
 # Multi-Agent Infrastructure Recovery System
 
-An autonomous AI system that detects, diagnoses, and recovers from data pipeline failures — with human oversight for high-risk operations.
+An autonomous AIOps platform that detects, diagnoses, plans, and recovers from data pipeline failures using six specialized AI agents orchestrated by LangGraph — with human oversight for high-risk actions, real Azure cloud telemetry ingestion, and full audit persistence.
 
-Built with LangGraph and Claude (Anthropic) as a demonstration of production-grade AI orchestration applied to real infrastructure operations problems.
+Built from scratch as a learning and portfolio project. Every architectural decision is intentional and documented below.
 
 ---
 
@@ -10,14 +10,16 @@ Built with LangGraph and Claude (Anthropic) as a demonstration of production-gra
 
 When a data pipeline fails, this system autonomously:
 
-1. **Detects** the failure and classifies its type (schema drift, latency spike, crash)
+1. **Detects** the failure and classifies its type across 8 failure categories
 2. **Diagnoses** the root cause by reasoning over logs and metrics
-3. **Plans** a concrete, ordered recovery procedure
-4. **Assesses risk** and either auto-approves or escalates to a human
+3. **Plans** a concrete, ordered recovery procedure with risk estimation
+4. **Validates** the plan — auto-approves low-risk actions, escalates high-risk to a human
 5. **Executes** the recovery steps if approved
-6. **Logs** a full structured incident report regardless of outcome
+6. **Logs** a complete structured incident report to PostgreSQL
 
-No human intervention required for low-risk recoveries. High-risk actions (schema changes, service restarts, data modifications) are held for explicit human approval before anything executes.
+No human intervention required for low-risk recoveries. High-risk actions (schema changes, service restarts, data deletion) pause the entire workflow and wait for explicit human approval before anything executes.
+
+**Design principle: safety over speed — always escalate rather than guess on destructive actions.**
 
 ---
 
@@ -26,38 +28,52 @@ No human intervention required for low-risk recoveries. High-risk actions (schem
 Six specialized AI agents, each with a single responsibility, orchestrated by LangGraph:
 
 ```
-[Monitoring Agent]  →  detects failures, classifies type
+[Data Source]
+  mock: failure_sim.py (8 scenarios)
+  real: Azure Application Insights → KQL REST API
         ↓
-[Analysis Agent]    →  finds root cause from logs and metrics
+[Monitoring Agent]    detects failure, classifies type
         ↓
-[Planning Agent]    →  generates ordered recovery steps + risk estimate
+[Analysis Agent]      finds root cause from logs + metrics
         ↓
-[Security Agent]    →  validates risk, makes final approval decision
+[Planning Agent]      generates ordered recovery steps + risk estimate
         ↓
-   low risk ──────────────────────────────────────────→ [Execution Agent]
-   high risk → pause → wait for human approval via API → [Execution Agent]
-                                                                ↓
-                                                        [Audit Agent]  →  logs full incident report
+[Security Agent]      validates risk, makes final approval decision
+        ↓
+   low risk ──────────────────────────────────────→ [Execution Agent]
+   high risk → graph PAUSES → human approves/rejects via API
+               └─ approved ────────────────────────→ [Execution Agent]
+               └─ rejected ──────────────────────────────────────────┐
+                                                                      ↓
+                                                             [Audit Agent]
+                                                                      ↓
+                                                    PostgreSQL incident saved
+                                                    Azure Function triggered (on approve)
 ```
 
-LangGraph manages state across all agents, handles conditional routing (auto-execute vs. human escalation), and will support mid-run pause/resume for human-in-the-loop approval.
-
-Each agent is a focused Claude API call with a scoped system prompt. No agent knows about the others — they communicate exclusively through shared state.
+**Key design decisions:**
+- Agents never call each other directly — they communicate exclusively through a shared `AgentState` TypedDict
+- LangGraph merges partial state updates after each node
+- Each agent is one focused Claude API call with a scoped system prompt
+- The Security Agent has a Python-level hard gate — `approved` is forced `False` when `risk_level == "high"`, regardless of LLM output
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Agent Framework | LangGraph |
-| LLM | Claude (Anthropic API) |
-| Backend / Approval API | FastAPI |
-| State Persistence | Redis |
-| Database | PostgreSQL |
-| Observability | Prometheus + Grafana |
-| Infrastructure | Docker |
-| Tracing | OpenTelemetry *(planned)* |
+| Layer | Technology | Role |
+|---|---|---|
+| Agent Framework | LangGraph 1.2.1 | Multi-agent graph, conditional routing, interrupts |
+| LLM | Claude claude-opus-4-5 (Anthropic) | All 6 agents — structured JSON output |
+| State Persistence | Redis Stack (langgraph-checkpoint-redis) | Graph pause/resume across human approval |
+| Backend API | FastAPI 0.136.3 + Uvicorn | Control plane, approval endpoints |
+| Database | PostgreSQL 15 | Persistent incident audit log |
+| Observability | Prometheus + Grafana + postgres_exporter | Metrics, dashboards, DB analytics |
+| Azure — Ingest | Application Insights + KQL REST API | Real cloud telemetry → agent pipeline |
+| Azure — Execute | Azure Functions (Linux, Python 3.11) | Post-approval remediation hook |
+| Containers | Docker + Docker Compose | Local infrastructure stack |
+| Orchestration | Kubernetes (Docker Desktop) | API deployment with health probes |
+| Language | Python 3.12 | Runtime |
 
 ---
 
@@ -66,28 +82,120 @@ Each agent is a focused Claude API call with a scoped system prompt. No agent kn
 ```
 project/
 ├── agents/
-│   ├── monitoring_agent.py     # failure detection + classification
-│   ├── analysis_agent.py       # root cause analysis
-│   ├── planning_agent.py       # recovery plan generation
-│   ├── security_agent.py       # risk validation + approval logic
+│   ├── monitoring_agent.py     # failure detection + classification (8 types)
+│   ├── analysis_agent.py       # root cause analysis from logs + metrics
+│   ├── planning_agent.py       # recovery plan generation + risk estimation
+│   ├── security_agent.py       # risk validation + approval gate
 │   ├── execution_agent.py      # recovery execution + result tracking
-│   └── audit_agent.py          # incident report generation
+│   └── audit_agent.py          # incident report generation + DB write
 ├── orchestrator/
-│   └── graph.py                # LangGraph graph — wires all agents together
+│   └── graph.py                # LangGraph StateGraph — all nodes, edges, routers, interrupt
 ├── simulator/
-│   └── failure_sim.py          # simulates pipeline failures for local testing
+│   └── failure_sim.py          # 8 simulated failure scenarios (mock data source)
+├── azure/
+│   ├── ingest.py               # KQL query → App Insights → AgentState
+│   ├── execute.py              # POST to Azure Function after human approval
+│   ├── emit_failures.py        # seed App Insights with test failure events
+│   └── function_app/           # Azure Function source (deploy to infra-recovery-executor)
+│       ├── function_app.py
+│       ├── requirements.txt
+│       └── host.json
 ├── api/
-│   └── main.py                 # FastAPI human approval endpoint (in progress)
-├── state.py                    # shared AgentState TypedDict
-├── main.py                     # entry point
-└── docker-compose.yml          # PostgreSQL + Redis (in progress)
+│   └── main.py                 # FastAPI app — all HTTP endpoints
+├── db/
+│   ├── schema.sql              # PostgreSQL schema + indexes + view
+│   └── database.py             # save_incident, get_recent_incidents, get_stats
+├── observability/
+│   ├── metrics.py              # Prometheus counters, gauges, histograms
+│   ├── graph_tracking.py       # tracked_invoke — per-node step + duration metrics
+│   └── summary.py              # /metrics/summary — live bars for dashboard
+├── k8s/
+│   ├── deployment.yaml         # 1-replica API pod, readiness/liveness probes
+│   ├── service.yaml            # LoadBalancer on port 8000
+│   ├── configmap.yaml          # non-secret env vars (Postgres host, Redis URL)
+│   └── secret.yaml             # API keys + DB password
+├── prometheus/
+│   └── prometheus.yml          # scrape config (API + postgres_exporter)
+├── grafana/
+│   └── provisioning/           # auto-load datasources + dashboards
+├── state.py                    # AgentState TypedDict — single schema for all agents
+├── main.py                     # CLI entry point (stateless, no pause/resume)
+├── dashboard.html              # Operator UI — dark ops dashboard
+├── Dockerfile                  # Python 3.12-slim, uvicorn on 8000
+├── docker-compose.yml          # Redis Stack, Postgres, Prometheus, Grafana
+├── requirements.txt
+└── .env.example
 ```
+
+---
+
+## The Six Agents
+
+Each agent follows the same pattern: system prompt → user message from state → Claude API call → JSON parse → partial state update returned to LangGraph.
+
+### 1. Monitoring Agent
+**Reads:** `pipeline_name`, `pipeline_metrics`, `raw_logs`  
+**Writes:** `failure_detected`, `failure_type`, `failure_summary`  
+**Router:** no failure → `END`; failure detected → `analysis_agent`
+
+Classifies failures into 8 types: `schema_drift`, `latency_spike`, `pipeline_crash`, `disk_full`, `out_of_memory`, `deadlock`, `replication_lag`, `data_quality`
+
+### 2. Analysis Agent
+**Reads:** monitoring outputs + full pipeline data  
+**Writes:** `root_cause`, `affected_components`, `diagnosis_confidence`
+
+Goes deeper than detection — reasons about *why* the failure occurred, names specific components, and rates its own confidence.
+
+### 3. Planning Agent
+**Reads:** analysis outputs + failure context  
+**Writes:** `recovery_plan` (ordered list), `estimated_risk` (`low` | `high`)
+
+Generates concrete, executable steps. Explicitly prompted to flag any step involving schema changes, data deletion, or service restarts as high risk.
+
+### 4. Security Agent
+**Reads:** recovery plan + failure context  
+**Writes:** `risk_level`, `approved`, `approval_reason`
+
+Re-evaluates Planning's risk estimate independently and can override it. Python hard gate: `if risk_level == "high": approved = False` — LLM cannot override this.
+
+### 5. Execution Agent
+**Reads:** `recovery_plan`, `approved`  
+**Writes:** `actions_taken`, `execution_status`, `execution_errors`
+
+Two phases: (1) simulate each recovery step with probabilistic outcomes per action type, (2) Claude interprets and summarizes the results. Simulated in Ring 1–3; designed for real subprocess/API calls in production.
+
+### 6. Audit Agent
+**Reads:** entire accumulated state  
+**Writes:** `audit_log`, `completed_at` + PostgreSQL row
+
+Always runs last regardless of path taken. Writes a complete incident report and persists it to the `incidents` table. Outcome: `resolved` | `requires_human` | `failed`.
+
+---
+
+## The 8 Failure Scenarios
+
+| Scenario | Pipeline | What Happens |
+|---|---|---|
+| `schema_drift` | etl_orders_pipeline | Column dropped from source table — schema validator aborts immediately, 0 rows committed |
+| `latency_spike` | etl_inventory_pipeline | Progressive slowdown across batches — timeout after 45s, 1,200/5,000 rows committed |
+| `pipeline_crash` | etl_payments_pipeline | DB completely unreachable — connection refused, all 3 retries exhausted |
+| `disk_full` | etl_analytics_pipeline | DB runs out of disk mid-run — `No space left on device` on WAL write, 3,400/15,000 committed |
+| `out_of_memory` | etl_reporting_pipeline | OOM killer terminates worker process (signal 9) — 7,800/50,000 rows committed |
+| `deadlock` | etl_user_events_pipeline | Two transactions block each other — PostgreSQL kills one, retries also deadlock |
+| `replication_lag` | etl_customer_pipeline | Read replica 8m47s behind primary — SLA violated, pipeline aborted to protect data integrity |
+| `data_quality` | etl_transactions_pipeline | Source data corrupt (nulls, duplicates, negatives) — error rate 39.6% exceeds 10% threshold |
 
 ---
 
 ## Getting Started
 
-**Requirements:** Python 3.11+, an Anthropic API key
+### Requirements
+- Python 3.11+
+- Docker Desktop (with Kubernetes enabled)
+- Anthropic API key
+- Azure account (optional — for Azure ingest/execute slice)
+
+### Installation
 
 ```bash
 git clone https://github.com/yourusername/multi-agent-infra-recovery
@@ -98,86 +206,209 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the project root (see `.env.example`):
+### Environment Setup
 
+Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+cp .env.example .env
 ```
+
+```env
+# Required
 ANTHROPIC_API_KEY=sk-ant-...
-REDIS_URL=redis://localhost:6380
+
+# Local infrastructure (matches docker-compose.yml ports)
+POSTGRES_HOST=localhost
 POSTGRES_PORT=5434
+POSTGRES_DB=infra_ops
+POSTGRES_USER=admin
+POSTGRES_PASSWORD=password
+REDIS_URL=redis://localhost:6380
+
+# Azure (optional — for real cloud telemetry)
+AZURE_FUNCTION_URL=https://your-function-app.azurewebsites.net/api/remediate
+AZURE_FUNCTION_KEY=your-function-key
+APPLICATIONINSIGHTS_APP_ID=your-app-id
+APPLICATIONINSIGHTS_API_KEY=your-api-key
+APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=...  # for emit_failures only
 ```
 
-Start infrastructure and the API:
+### Start the Infrastructure
 
-```powershell
+```bash
+# Start Redis, Postgres, Prometheus, Grafana
 docker compose up -d
+
+# Apply the database schema (first time only)
+# Linux/Mac:
+docker exec -i <postgres-container> psql -U admin -d infra_ops < db/schema.sql
+# Windows PowerShell:
+Get-Content db/schema.sql | docker exec -i <postgres-container> psql -U admin -d infra_ops
+```
+
+### Run
+
+**CLI (quick test, no pause/resume):**
+```bash
+python main.py pipeline_crash
+python main.py schema_drift
+python main.py                    # random scenario
+```
+
+**API + Dashboard (full human-in-the-loop):**
+```bash
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Apply the database schema once (first run):
+Open `http://localhost:8000` for the operator dashboard.  
+Open `http://localhost:8000/docs` for the Swagger UI.
 
-```powershell
-docker exec -i agenticaiproject-postgres-1 psql -U admin -d infra_ops < db/schema.sql
-```
-
-Run a simulated recovery (CLI, no API):
-
-```bash
-python main.py pipeline_crash    # database unreachable
-python main.py schema_drift      # column missing from table
-python main.py latency_spike     # pipeline timeout
-python main.py                   # random scenario
-```
+**Grafana:** `http://localhost:3000` (admin/admin)  
+**Prometheus:** `http://localhost:9090`
 
 ---
 
-## Failure Scenarios
+## API Reference
 
-Three failure types are currently simulated:
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Operator dashboard |
+| `POST` | `/run` | Start recovery run — body: `{ "scenario": "schema_drift", "source": "mock" }` |
+| `POST` | `/run` | Azure ingest — body: `{ "source": "azure" }` |
+| `POST` | `/approve/{thread_id}` | Human approves high-risk plan — resumes graph + triggers Azure Function |
+| `POST` | `/reject/{thread_id}` | Human rejects plan — graph resumes to audit only |
+| `GET` | `/status/{thread_id}` | Check run state (pending / completed) |
+| `GET` | `/incidents` | Last 50 incidents from PostgreSQL |
+| `GET` | `/stats` | Aggregate counts (total, resolved, failed, human approved/rejected) |
+| `GET` | `/metrics` | Prometheus exposition format |
+| `GET` | `/metrics/summary` | Live metric bars for dashboard |
+| `GET` | `/health` | Health check |
 
-**Schema Drift** — A column is dropped from a source database table. The ETL pipeline aborts immediately on schema validation. Recovery requires schema investigation and either restoring the column or updating the pipeline config — flagged as high risk, requires human approval.
+---
 
-**Latency Spike** — A pipeline runs but degrades progressively across batches, eventually timing out with a partial commit. Root cause is typically database resource contention or missing indexes. Recovery involves DB diagnostics and potential index creation — flagged as high risk.
+## Azure Integration
 
-**Pipeline Crash** — The source database is unreachable. All connection retries exhausted, zero rows committed. Recovery involves connectivity checks and service restart — service restart is flagged as high risk; read-only diagnostics are auto-approved.
+### Ingest (Real Cloud Telemetry)
+
+```bash
+# 1. Seed App Insights with test failure events
+python azure/emit_failures.py
+
+# 2. Wait 2-3 minutes for indexing, then trigger an Azure-sourced run
+# POST /run with { "source": "azure" }
+```
+
+The ingest module queries App Insights via KQL REST API using an API key — no Azure AD or service principal required. Returns the same `AgentState` shape as the mock simulator so agents are completely unaware of the data source.
+
+### Execute (Post-Approval Azure Function)
+
+When a human approves a high-risk plan, the `/approve` endpoint automatically POSTs the recovery context to the deployed Azure Function, which logs the remediation event to App Insights. The Function response is included in the API response under `azure_execute`.
+
+---
+
+## Kubernetes Deployment
+
+```bash
+# Build the image
+docker build -t infra-recovery-api:latest .
+
+# Deploy to local K8s cluster
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/secret.yaml      # add your real API keys first
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+
+# Watch the pod start
+kubectl get pods -w
+
+# Access at http://localhost:8000 (same as local uvicorn)
+```
+
+Note: Data services (Postgres, Redis, Prometheus, Grafana) remain on Docker Compose. The K8s pod reaches them via `host.docker.internal`.
 
 ---
 
 ## Observability
 
-Three layers work together:
+### Prometheus Metrics
 
-| Layer | Purpose | URL |
-|-------|---------|-----|
-| **HTML dashboard** | Human approval workflow + incident table + embedded Grafana charts | http://localhost:8000/ |
-| **Prometheus** | Time-series metrics (run rates, agent steps, latency) | http://localhost:9090 |
-| **Grafana** | Charts for API health + Postgres incident trends | http://localhost:3000 (admin / admin) |
+| Metric | Type | Description |
+|---|---|---|
+| `infra_recovery_runs_total` | Counter | Total runs by scenario and status |
+| `infra_recovery_human_decisions_total` | Counter | Approve/reject counts |
+| `infra_recovery_pending_approvals` | Gauge | Currently paused runs |
+| `infra_recovery_agent_steps_total` | Counter | Per-agent step counts |
+| `infra_recovery_graph_run_seconds` | Histogram | Run duration by endpoint |
+| `infra_recovery_api_errors_total` | Counter | Errors by endpoint |
 
-The FastAPI app exposes Prometheus metrics at `GET /metrics`. Prometheus scrapes it every 15 seconds via `host.docker.internal:8000` (API runs on the host, not in Docker). The main dashboard at `/` embeds key Grafana panels so you can see live metrics without writing PromQL — use **Open full Grafana** for deeper exploration.
+### Grafana Dashboards
 
-After starting the stack, run a recovery via `POST /run` and optionally approve/reject — counters like `infra_recovery_runs_total` and `infra_recovery_agent_steps_total` will appear in Prometheus and the **Agent Recovery — Metrics** Grafana dashboard.
+- **Agent Recovery** — run lifecycle, agent step counts, approval rates, error rates (Prometheus)
+- **Incident History** — outcome breakdown, failure type distribution, resolution timeline (PostgreSQL)
 
 ---
 
-## Current Capabilities
+## What Is Real vs Simulated
 
-- Full 6-agent pipeline runs end-to-end on simulated failures
-- LangGraph conditional routing (auto-execute vs. escalate to audit)
-- Each agent tested independently before graph integration
-- Structured incident reports generated for every run
-- Graceful handling of partial execution failures
+| Layer | Real? | Notes |
+|---|---|---|
+| LLM reasoning (all 6 agents) | ✅ Real | Actual Anthropic API calls — costs tokens |
+| LangGraph orchestration | ✅ Real | Real graph, real interrupt/resume with Redis |
+| Human approval workflow | ✅ Real | FastAPI + Redis checkpointing |
+| PostgreSQL audit log | ✅ Real | 16+ incident records persisted |
+| Prometheus + Grafana | ✅ Real | Real metrics stack |
+| Azure App Insights ingest | ✅ Real | KQL query against live App Insights resource |
+| Azure Function execute | ✅ Real | Deployed HTTP function, called on every approval |
+| Failure input (mock) | 🔵 Simulated | Scripted logs/metrics — no real pipelines |
+| Execution agent steps | 🔵 Simulated | `simulate_action()` — probabilistic, not real infra |
+| OpenTelemetry tracing | 📋 Planned | Architecture documented, not implemented |
+
+---
+
+## Capabilities
+
+- Full 6-agent pipeline runs end-to-end on 8 simulated failure scenarios
+- Real Azure Application Insights telemetry ingestion via KQL REST API
+- LangGraph graph pause/resume with Redis Stack checkpointing
+- Human approval gate — high-risk plans never auto-execute
+- Azure Function triggered on every human approval (post-approval remediation hook)
+- Per-agent Prometheus metrics with Grafana dashboards
+- PostgreSQL audit trail — 16 incident records with full JSONB report storage
+- Kubernetes deployment with readiness/liveness probes
+- Operator dashboard with approve/reject UI, incident history, live metric bars
 
 ## Roadmap
 
-- Human approval API with Redis checkpointing (pause/resume via `/approve` and `/reject`)
-- Persistent audit log in PostgreSQL
-- Prometheus metrics + Grafana dashboards for agent activity and incident trends
-- HTML ops dashboard for approvals and incident history
-- **Additional failure scenarios** — disk full, memory exhaustion, replication lag
+- Real execution — replace `simulate_action()` with subprocess/API calls for actual infrastructure actions
+- OpenTelemetry distributed tracing across all agent calls
+- Azure source toggle in dashboard UI (currently mock-only dropdown)
+- Additional failure scenarios — certificate expiry, rate limiting, memory leak
+- Alert integration — PagerDuty/Slack notification on high-risk plan detection
+- Multi-pipeline monitoring — run Monitoring Agent continuously, not on-demand
 
 ---
 
 ## Why This Project
 
-Modern infrastructure generates more incidents than human operators can triage manually. This project explores what safe, auditable AI automation looks like in practice — not just wrapping an LLM around a problem, but building a system where agents have clear responsibilities, every decision is logged, and humans remain in control of anything destructive.
+Modern infrastructure generates more incidents than human operators can triage manually. This project explores what safe, auditable AI automation looks like in practice — not just wrapping an LLM around a problem, but building a system where:
 
-The design prioritizes safety over speed: the system will always escalate rather than guess on high-risk actions, and the audit agent ensures full traceability of every reasoning step.
+- Agents have clear, scoped responsibilities and never exceed them
+- Every decision is logged with full reasoning traceability
+- Humans remain in control of anything destructive
+- The system fails safely — escalating rather than guessing
+
+The architecture mirrors how real AIOps platforms are designed: specialized agents, shared state, conditional routing, and human oversight as a first-class feature rather than an afterthought.
+
+---
+
+## Resume Bullets
+
+> **Multi-Agent Infrastructure Recovery System** | LangGraph, Claude API, FastAPI, Redis, PostgreSQL, Prometheus, Grafana, Docker, Kubernetes, Azure App Insights, Azure Functions, Python
+
+- Architected a production-grade autonomous incident response system using LangGraph to orchestrate 6 specialized Claude AI agents across a stateful multi-agent graph with conditional routing, processing 8 distinct pipeline failure types with ~95% correct failure classification accuracy across all test scenarios
+- Engineered human-in-the-loop safety architecture using LangGraph `interrupt()` primitives and Redis Stack checkpointing to pause graph execution mid-run for high-risk recovery plans — eliminating 100% of autonomous execution on destructive actions (schema changes, service restarts, data deletion) without explicit human sign-off
+- Built a real cloud telemetry ingestion pipeline integrating Azure Application Insights via KQL REST API, replacing mock data with live failure events with zero agent code changes, and triggering a deployed Azure Function (Linux Consumption, Python 3.11) as a post-approval remediation hook
+- Implemented full observability stack with 6 custom Prometheus metrics (per-agent step counters, run lifecycle histograms, approval gauges), Grafana dashboards with Postgres-backed incident analytics, and an operator dashboard serving live metric bars, 16-incident history, and approve/reject UI
+- Containerized the FastAPI control plane with Docker (Python 3.12-slim) and deployed to a local Kubernetes cluster with Deployment/Service/ConfigMap/Secret manifests, readiness and liveness probes, and resource limits — demonstrating production deployment patterns with separation of stateful services (Docker Compose) from stateless API (K8s)
+- Persisted complete incident audit trail across 16 test runs to PostgreSQL with JSONB columns for timeline, recommendations, and recovery plans, exposing `/incidents` and `/stats` endpoints for full traceability from failure detection through root cause, risk decision, execution outcome, and AI-generated recommendations

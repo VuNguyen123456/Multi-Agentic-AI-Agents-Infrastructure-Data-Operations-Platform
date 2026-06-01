@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infra-recovery-api
+  namespace: default
+  labels:
+    app: infra-recovery-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: infra-recovery-api
+  template:
+    metadata:
+      labels:
+        app: infra-recovery-api
+    spec:
+      containers:
+        - name: api
+          image: infra-recovery-api:latest
+          # Never pull from registry — use locally built image
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          # Load non-secret config from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: infra-recovery-config
+            - secretRef:
+                name: infra-recovery-secrets
+          # Health check — K8s restarts the pod if this fails
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

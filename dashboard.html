@@ -836,12 +836,27 @@ async function decide(thread_id, approved) {
       return;
     }
 
-    toast(
-      approved
-        ? `Approved — execution ${data.execution_status || 'complete'}`
-        : `Rejected — incident logged`,
-      approved ? 'success' : 'error'
-    );
+    if (approved && data.azure_execute) {
+      const az = data.azure_execute;
+      if (az.status === 'executed') {
+        toast(`Approved — Azure executor: ${az.message || 'executed'}`, 'success');
+      } else if (az.status === 'skipped') {
+        toast(`Approved — execution ${data.execution_status || 'complete'} (Azure not configured)`, 'success');
+      } else {
+        toast(`Approved — Azure: ${az.status}${az.error ? ' — ' + az.error : ''}`, 'error');
+      }
+    } else {
+      toast(
+        approved
+          ? `Approved — execution ${data.execution_status || 'complete'}`
+          : `Rejected — incident logged`,
+        approved ? 'success' : 'error'
+      );
+    }
+
+    if (approved && data.azure_execute) {
+      console.log('azure_execute:', data.azure_execute);
+    }
 
     run.status = 'completed';
     renderActive();

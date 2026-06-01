@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infra-recovery-config
+  namespace: default
+data:
+  # These are non-secret environment variables
+  # host.docker.internal lets the K8s pod reach your Docker Compose services
+  # running on the host machine (Postgres, Redis)
+  POSTGRES_HOST: "host.docker.internal"
+  POSTGRES_PORT: "5434"
+  POSTGRES_DB:   "infra_ops"
+  POSTGRES_USER: "admin"
+  REDIS_URL:     "redis://host.docker.internal:6380"
