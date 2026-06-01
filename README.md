@@ -402,13 +402,4 @@ The architecture mirrors how real AIOps platforms are designed: specialized agen
 
 ---
 
-## Resume Bullets
-
-> **Multi-Agent Infrastructure Recovery System** | LangGraph, Claude API, FastAPI, Redis, PostgreSQL, Prometheus, Grafana, Docker, Kubernetes, Azure App Insights, Azure Functions, Python
-
-- Architected a production-grade autonomous incident response system using LangGraph to orchestrate 6 specialized Claude AI agents across a stateful multi-agent graph with conditional routing, processing 8 distinct pipeline failure types with ~95% correct failure classification accuracy across all test scenarios
-- Engineered human-in-the-loop safety architecture using LangGraph `interrupt()` primitives and Redis Stack checkpointing to pause graph execution mid-run for high-risk recovery plans — eliminating 100% of autonomous execution on destructive actions (schema changes, service restarts, data deletion) without explicit human sign-off
-- Built a real cloud telemetry ingestion pipeline integrating Azure Application Insights via KQL REST API, replacing mock data with live failure events with zero agent code changes, and triggering a deployed Azure Function (Linux Consumption, Python 3.11) as a post-approval remediation hook
-- Implemented full observability stack with 6 custom Prometheus metrics (per-agent step counters, run lifecycle histograms, approval gauges), Grafana dashboards with Postgres-backed incident analytics, and an operator dashboard serving live metric bars, 16-incident history, and approve/reject UI
-- Containerized the FastAPI control plane with Docker (Python 3.12-slim) and deployed to a local Kubernetes cluster with Deployment/Service/ConfigMap/Secret manifests, readiness and liveness probes, and resource limits — demonstrating production deployment patterns with separation of stateful services (Docker Compose) from stateless API (K8s)
-- Persisted complete incident audit trail across 16 test runs to PostgreSQL with JSONB columns for timeline, recommendations, and recovery plans, exposing `/incidents` and `/stats` endpoints for full traceability from failure detection through root cause, risk decision, execution outcome, and AI-generated recommendations
+## Demo
