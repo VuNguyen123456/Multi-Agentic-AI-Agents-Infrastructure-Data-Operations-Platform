@@ -693,10 +693,17 @@
     <div class="section-title">Trigger Recovery Run</div>
   </div>
   <div class="run-form">
+    <div class="form-field" style="max-width:140px">
+      <label class="form-label">Data source</label>
+      <select id="source-select">
+        <option value="mock">mock (simulator)</option>
+        <option value="azure">azure (App Insights)</option>
+      </select>
+    </div>
     <div class="form-field">
-      <label class="form-label">Failure Scenario</label>
+      <label class="form-label">Failure Scenario <span style="color:var(--dim);font-weight:400">(mock only)</span></label>
       <select id="scenario-select">
-        <option value="">— none —</option>
+        <option value="">— random —</option>
         <option value="schema_drift">schema_drift</option>
         <option value="latency_spike">latency_spike</option>
         <option value="pipeline_crash">pipeline_crash</option>
@@ -763,17 +770,40 @@ function toast(msg, type = 'success') {
 }
 
 // ── TRIGGER RUN ────────────────────────────────────────────────────────────────
+/** Merge server-side pending runs (from /docs, API, or dashboard) into Active Incidents. */
+async function syncPendingApprovals() {
+  try {
+    const res = await fetch(`${API}/pending-approvals`);
+    if (!res.ok) return;
+    const items = await res.json();
+    let added = false;
+    for (const item of items) {
+      const tid = item.thread_id;
+      const existing = activeRuns[tid];
+      if (existing && (existing.status === 'processing' || existing.status === 'completed')) {
+        continue;
+      }
+      activeRuns[tid] = { ...item, status: 'pending_approval' };
+      added = true;
+    }
+    if (added) renderActive();
+  } catch (e) { /* API down */ }
+}
+
 async function triggerRun() {
   const btn      = document.getElementById('run-btn');
   const scenario = document.getElementById('scenario-select').value || null;
+  const source   = document.getElementById('source-select').value || 'mock';
   btn.disabled   = true;
   btn.innerHTML  = '<span class="spin"></span>Starting...';
 
   try {
+    const body = { source };
+    if (source === 'mock' && scenario) body.scenario = scenario;
     const res  = await fetch(`${API}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scenario })
+      body: JSON.stringify(body)
     });
     const data = await res.json();
 
@@ -1132,7 +1162,7 @@ async function loadMetricsSummary() {
     const live = data.live || {};
     const hist = data.history || {};
 
-    const pending = live.pending_approvals ?? 0;
+    const pending = Math.max(0, live.pending_approvals ?? 0);
     const pendingEl = document.getElementById('native-pending');
     pendingEl.textContent = pending;
     pendingEl.className = 'native-pending' + (pending > 0 ? ' warn' : '');
@@ -1155,12 +1185,26 @@ function initGrafanaLink() {
   if (link) link.href = GRAFANA;
 }
 
+async function initFromQueryThreadId() {
+  const tid = new URLSearchParams(window.location.search).get('thread_id');
+  if (!tid) return;
+  try {
+    await fetch(`${API}/status/${encodeURIComponent(tid)}`);
+  } catch (e) { /* ignore */ }
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────────
 initGrafanaLink();
 loadMetricsSummary();
 loadHistory();
 loadStats();
-setInterval(() => { loadHistory(); loadStats(); loadMetricsSummary(); }, 5000);
+initFromQueryThreadId().then(() => syncPendingApprovals());
+setInterval(() => {
+  syncPendingApprovals();
+  loadHistory();
+  loadStats();
+  loadMetricsSummary();
+}, 5000);
 </script>
 </body>
 </html>

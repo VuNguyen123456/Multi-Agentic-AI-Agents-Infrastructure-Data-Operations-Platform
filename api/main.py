@@ -27,6 +27,7 @@ from observability.metrics import (
     PENDING_APPROVALS,
     RUNS_TOTAL,
 )
+from .pending import list_pending_approvals, track_pending, untrack_pending
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6380")
 app_state = {}
@@ -122,6 +123,16 @@ def graph_is_paused(result, state_snapshot) -> bool:
     return bool(state_snapshot and state_snapshot.next)
 
 
+def sync_pending_gauge() -> int:
+    """Align Prometheus gauge with actual paused runs (never negative)."""
+    graph = app_state.get("graph")
+    if not graph:
+        return 0
+    count = len(list_pending_approvals(REDIS_URL, graph))
+    PENDING_APPROVALS.set(count)
+    return count
+
+
 def metric_scenario(request_scenario: str | None, state: dict) -> str:
     """Label for Prometheus RUNS_TOTAL — prefer classified failure_type."""
     return (
@@ -183,7 +194,8 @@ async def run_pipeline(request: RunRequest):
             scenario=metric_scenario(scenario_key, values),
             status="pending_approval",
         ).inc()
-        PENDING_APPROVALS.inc()
+        track_pending(REDIS_URL, thread_id)
+        sync_pending_gauge()
         body = pending_approval_response(thread_id, values)
         body["source"] = request.source
         return body
@@ -233,7 +245,8 @@ async def approve_plan(thread_id: str, request: ApprovalRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
     HUMAN_DECISIONS_TOTAL.labels(decision="approved").inc()
-    PENDING_APPROVALS.dec()
+    untrack_pending(REDIS_URL, thread_id)
+    sync_pending_gauge()
     RUNS_TOTAL.labels(
         scenario=metric_scenario(None, result if isinstance(result, dict) else {}),
         status="completed",
@@ -292,7 +305,8 @@ async def reject_plan(thread_id: str, request: ApprovalRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
     HUMAN_DECISIONS_TOTAL.labels(decision="rejected").inc()
-    PENDING_APPROVALS.dec()
+    untrack_pending(REDIS_URL, thread_id)
+    sync_pending_gauge()
     RUNS_TOTAL.labels(
         scenario=metric_scenario(None, result if isinstance(result, dict) else {}),
         status="completed",
@@ -324,7 +338,7 @@ async def get_status(thread_id: str):
     values    = state_snapshot.values
     is_paused = bool(state_snapshot.next)
 
-    return {
+    body = {
         "thread_id":        thread_id,
         "status":           "pending_approval" if is_paused else "completed",
         "pipeline":         values.get("pipeline_name"),
@@ -333,6 +347,21 @@ async def get_status(thread_id: str):
         "execution_status": values.get("execution_status"),
         "next_node":        list(state_snapshot.next) if is_paused else None,
     }
+    if is_paused:
+        track_pending(REDIS_URL, thread_id)
+        body["risk_reason"]   = values.get("approval_reason")
+        body["recovery_plan"] = values.get("recovery_plan")
+    return body
+
+
+@app.get("/pending-approvals")
+async def get_pending_approvals():
+    """All runs waiting for human approval (any client: /docs, dashboard, curl)."""
+    graph = app_state.get("graph")
+    if not graph:
+        raise HTTPException(status_code=503, detail="Graph not ready")
+    return list_pending_approvals(REDIS_URL, graph)
+
 
 # Serve the dashboard HTML at /
 @app.get("/")
@@ -378,8 +407,11 @@ async def metrics_summary():
     except Exception:
         breakdowns = {"outcomes": {}, "failure_types": {}, "approvals": {}}
 
+    live = build_metrics_summary()
+    live["pending_approvals"] = sync_pending_gauge()
+
     return {
-        "live": build_metrics_summary(),
+        "live": live,
         "history": breakdowns,
         "note": "live = Prometheus counters since this API process started",
     }

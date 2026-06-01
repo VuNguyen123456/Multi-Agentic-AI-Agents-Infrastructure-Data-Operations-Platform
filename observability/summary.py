@@ -33,7 +33,7 @@ def build_metrics_summary() -> dict:
     agent_steps.pop("__interrupt__", None)
 
     return {
-        "pending_approvals": int(gauge_value(PENDING_APPROVALS)),
+        "pending_approvals": max(0, int(gauge_value(PENDING_APPROVALS))),
         "runs_by_status": counter_by_label(RUNS_TOTAL, "status"),
         "human_decisions": counter_by_label(HUMAN_DECISIONS_TOTAL, "decision"),
         "agent_steps": agent_steps,
