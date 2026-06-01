@@ -448,8 +448,8 @@ The Audit Agent writes a structured incident report and persists it to PostgreSQ
 
 6 custom Prometheus metrics — per-agent step counters, run lifecycle histograms, and approval gauges.
 
-Video Walkthrough
+### Video Walkthrough
 
-https://www.loom.com/share/f0b5b086d838485d8791760b2bffa519
+<a href="https://www.loom.com/share/f0b5b086d838485d8791760b2bffa519" target="_blank">▶ Watch the 3-minute demo</a> — Azure ingest → agent reasoning → human approval → execution → audit log
 
 3-minute walkthrough: Azure ingest → agent reasoning → human approval → execution → audit log
