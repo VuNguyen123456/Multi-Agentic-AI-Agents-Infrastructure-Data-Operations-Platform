@@ -403,3 +403,50 @@ The architecture mirrors how real AIOps platforms are designed: specialized agen
 ---
 
 ## Demo
+
+A full end-to-end run: Azure telemetry ingested → 6 agents reason autonomously → human approves high-risk plan → execution runs → audit saved to PostgreSQL.
+
+# Agent Pipeline — Full Run
+
+<img width="1468" height="275" alt="image" src="https://github.com/user-attachments/assets/33bd2db6-24e0-4572-81dc-85731ca66360" />
+
+<img width="2538" height="324" alt="image" src="https://github.com/user-attachments/assets/a46f092f-0336-4594-83ef-503cea3b9f36" />
+
+<img width="2005" height="493" alt="image" src="https://github.com/user-attachments/assets/ee7bcf4a-5ae0-4d17-8225-120875d2f4a1" />
+
+<img width="2547" height="239" alt="image" src="https://github.com/user-attachments/assets/2280880a-b918-4a61-8fcf-b6ff08065b6c" />
+
+<img width="2529" height="154" alt="image" src="https://github.com/user-attachments/assets/75c31f9a-c610-491b-a02b-5cdd824a55fa" />
+
+<img width="2536" height="278" alt="image" src="https://github.com/user-attachments/assets/cb317cfb-c647-48a9-91d1-c61b62284b99" />
+
+<img width="1337" height="806" alt="image" src="https://github.com/user-attachments/assets/cb3270f4-6229-4407-a2ff-f063fdbe1081" />
+
+<img width="2544" height="897" alt="image" src="https://github.com/user-attachments/assets/9b6c99d9-5b2e-4efb-82ba-d676df344a32" />
+
+All 6 agents firing in sequence. The Security Agent flags a high-risk plan and the graph pauses at human approval.
+
+# Operator Dashboard — Pending Approval
+
+<img width="1159" height="1091" alt="image" src="https://github.com/user-attachments/assets/6abcf85b-3586-4474-8c29-2a44ba604146" />
+
+<img width="1124" height="1134" alt="image" src="https://github.com/user-attachments/assets/077d075d-8fc9-4831-ada6-e872594f3f9f" />
+
+The ops dashboard surfaces the recovery plan with approve/reject controls. No terminal access needed for the human reviewer.
+
+# Incident Report + PostgreSQL Audit
+
+<img width="2549" height="484" alt="image" src="https://github.com/user-attachments/assets/162eb73d-4263-4320-b702-ce355d65de38" />
+
+<img width="1015" height="129" alt="image" src="https://github.com/user-attachments/assets/f407c344-3613-4a80-8a1d-3c06560f0199" />
+
+The Audit Agent writes a structured incident report and persists it to PostgreSQL. [Database] Incident saved → id: 16
+
+# Grafana Observability Dashboard
+
+<img width="1201" height="991" alt="image" src="https://github.com/user-attachments/assets/c237147a-153a-4033-95df-c2a6e89a764e" />
+
+6 custom Prometheus metrics — per-agent step counters, run lifecycle histograms, and approval gauges.
+
+Video Walkthrough
+3-minute walkthrough: Azure ingest → agent reasoning → human approval → execution → audit log
