@@ -720,7 +720,7 @@
   <!-- ACTIVE / PENDING -->
   <div class="section-hd">
     <div class="section-title">Active Incidents</div>
-    <div style="font-size:11px;color:var(--muted)" id="refresh-label">auto-refreshes every 5s</div>
+    <div style="font-size:11px;color:var(--muted)" id="refresh-label">new incidents appear automatically</div>
   </div>
   <div class="incidents" id="active-list">
     <div class="empty"><div class="empty-icon">📭</div>No active incidents.<br>Trigger a run above to start.</div>
@@ -758,6 +758,7 @@
 const API = window.location.origin;
 const GRAFANA = 'http://localhost:3000';
 let activeRuns = {};   // thread_id → run data
+let openCardIds = new Set();  // expanded incident cards (preserved across refresh)
 let historyLoading = false;
 let pendingHistoryThreadId = null;
 
@@ -776,17 +777,32 @@ async function syncPendingApprovals() {
     const res = await fetch(`${API}/pending-approvals`);
     if (!res.ok) return;
     const items = await res.json();
-    let added = false;
+    const serverIds = new Set(items.map(i => i.thread_id));
+    let changed = false;
+
+    // Remove incidents resolved elsewhere (e.g. approved via Swagger)
+    for (const tid of Object.keys(activeRuns)) {
+      const run = activeRuns[tid];
+      if (run.status === 'pending_approval' && !serverIds.has(tid)) {
+        delete activeRuns[tid];
+        openCardIds.delete(tid);
+        removeIncidentCard(tid);
+        changed = true;
+      }
+    }
+
+    // Only append brand-new pending incidents — never re-render existing cards
     for (const item of items) {
       const tid = item.thread_id;
       const existing = activeRuns[tid];
-      if (existing && (existing.status === 'processing' || existing.status === 'completed')) {
-        continue;
-      }
+      if (existing) continue;
       activeRuns[tid] = { ...item, status: 'pending_approval' };
-      added = true;
+      openCardIds.add(tid);
+      appendIncidentCard(activeRuns[tid]);
+      changed = true;
     }
-    if (added) renderActive();
+
+    if (changed) updatePendingStat();
   } catch (e) { /* API down */ }
 }
 
@@ -814,7 +830,9 @@ async function triggerRun() {
 
     if (data.thread_id) {
       activeRuns[data.thread_id] = data;
-      renderActive();
+      if (data.status === 'pending_approval') openCardIds.add(data.thread_id);
+      appendIncidentCard(activeRuns[data.thread_id]);
+      updatePendingStat();
       toast(`Run started → ${data.pipeline || 'pipeline'}`, 'success');
 
       loadMetricsSummary();
@@ -822,7 +840,9 @@ async function triggerRun() {
       if (data.status === 'completed') {
         setTimeout(() => {
           delete activeRuns[data.thread_id];
-          renderActive();
+          openCardIds.delete(data.thread_id);
+          removeIncidentCard(data.thread_id);
+          updatePendingStat();
           loadHistory();
           loadStats();
           loadMetricsSummary();
@@ -848,7 +868,7 @@ async function decide(thread_id, approved) {
 
   run.status = 'processing';
   run._decision = approved ? 'approved' : 'rejected';
-  renderActive();
+  updateIncidentCard(run);
 
   try {
     const res  = await fetch(`${API}/${action}/${thread_id}`, {
@@ -861,7 +881,7 @@ async function decide(thread_id, approved) {
     if (!res.ok) {
       run.status = 'pending_approval';
       run._decision = null;
-      renderActive();
+      updateIncidentCard(run);
       toast(data.detail || `Decision failed (${res.status})`, 'error');
       return;
     }
@@ -889,7 +909,7 @@ async function decide(thread_id, approved) {
     }
 
     run.status = 'completed';
-    renderActive();
+    updateIncidentCard(run);
 
     pendingHistoryThreadId = thread_id;
     historyLoading = true;
@@ -900,7 +920,9 @@ async function decide(thread_id, approved) {
     pendingHistoryThreadId = null;
 
     delete activeRuns[thread_id];
-    renderActive();
+    openCardIds.delete(thread_id);
+    removeIncidentCard(thread_id);
+    updatePendingStat();
     await loadStats();
     loadMetricsSummary();
 
@@ -912,10 +934,10 @@ async function decide(thread_id, approved) {
     if (activeRuns[thread_id]) {
       activeRuns[thread_id].status = 'pending_approval';
       activeRuns[thread_id]._decision = null;
+      updateIncidentCard(activeRuns[thread_id]);
     }
     historyLoading = false;
     pendingHistoryThreadId = null;
-    renderActive();
     await loadHistory();
     toast('API error during decision', 'error');
   }
@@ -950,95 +972,158 @@ async function waitForIncidentInHistory(thread_id, run, attempts = 15, delayMs =
 }
 
 // ── RENDER ACTIVE INCIDENTS ───────────────────────────────────────────────────
+function captureNotes() {
+  const notes = {};
+  for (const tid of Object.keys(activeRuns)) {
+    const el = document.getElementById(`notes-${tid}`);
+    if (el) notes[tid] = el.value;
+  }
+  return notes;
+}
+
+function restoreNotes(notes) {
+  for (const [tid, val] of Object.entries(notes)) {
+    const el = document.getElementById(`notes-${tid}`);
+    if (el) el.value = val;
+  }
+}
+
+function updatePendingStat() {
+  const pending = Object.values(activeRuns).filter(r => r.status === 'pending_approval').length;
+  document.getElementById('stat-pending').textContent = pending;
+}
+
+function buildIncidentCardHtml(run) {
+  const isPending    = run.status === 'pending_approval';
+  const isProcessing = run.status === 'processing';
+  const isCompleted  = run.status === 'completed';
+  const isOpen       = openCardIds.has(run.thread_id);
+  const cardClass    = isPending ? 'pending'
+    : isProcessing ? 'processing'
+    : isCompleted ? (run._decision === 'rejected' ? 'failed' : 'resolved')
+    : '';
+  const statusClass  = isPending ? 'status-pending'
+    : isProcessing ? 'status-running'
+    : isCompleted ? 'status-resolved'
+    : 'status-running';
+  const badgeClass   = isPending ? 'badge-pending'
+    : isProcessing ? 'badge-processing'
+    : 'badge-resolved';
+  const badgeText    = isPending ? 'awaiting approval'
+    : isProcessing ? 'processing'
+    : isCompleted ? (run._decision === 'approved' ? 'approved' : run._decision === 'rejected' ? 'rejected' : 'completed')
+    : 'running';
+
+  const planHtml = (run.recovery_plan || []).map((step, i) => {
+    const isDanger = /alter|delete|drop|restart|terminate|truncate/i.test(step);
+    return `<div class="plan-step">
+      <span class="plan-step-num">${i+1}.</span>
+      <span class="plan-step-text ${isDanger ? 'danger' : ''}">${escHtml(step)}</span>
+    </div>`;
+  }).join('');
+
+  const riskHtml = run.risk_reason ? `
+    <div class="risk-box">
+      <span class="risk-icon">⚠</span>
+      <span>${escHtml(run.risk_reason)}</span>
+    </div>` : '';
+
+  const savedNote = run._savedNotes || '';
+  const actionsHtml = isPending ? `
+    <div class="approval-actions">
+      <input id="notes-${run.thread_id}" class="notes-input" placeholder="Optional notes for the audit log..." value="${escAttr(savedNote)}" />
+      <button class="btn btn-approve btn-sm" onclick="decide('${run.thread_id}', true)">Approve</button>
+      <button class="btn btn-reject btn-sm" onclick="decide('${run.thread_id}', false)">Reject</button>
+    </div>` : isProcessing ? `
+    <div class="processing-box">
+      <span class="spin"></span>
+      <span>${run._decision === 'approved'
+        ? 'Approved — running execution, audit agent, and saving to history...'
+        : 'Rejected — writing audit log and saving to history...'}</span>
+    </div>` : `<div style="font-size:11px;color:var(--muted)">
+      ${isCompleted ? 'Decision recorded — syncing history...' : '<span class="spin"></span>Processing...'}
+    </div>`;
+
+  return `
+  <div class="incident-card ${cardClass}" id="card-${run.thread_id}">
+    <div class="card-header" onclick="toggleCard('${run.thread_id}')">
+      <div class="card-left">
+        <div class="card-status ${statusClass}"></div>
+        <div class="card-pipeline">${escHtml(run.pipeline || run.pipeline_name || '—')}</div>
+        <span class="badge badge-type">${escHtml(run.failure_type || '—')}</span>
+        <span class="badge ${badgeClass}">${badgeText}</span>
+      </div>
+      <div class="card-right">
+        <span style="color:var(--red);font-size:11px">${run.risk_level === 'high' ? '⚠ HIGH RISK' : ''}</span>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim)">${run.thread_id.substring(0,8)}...</span>
+        <span>▾</span>
+      </div>
+    </div>
+    <div class="card-body ${isOpen ? 'open' : ''}" id="body-${run.thread_id}">
+      ${riskHtml}
+      ${planHtml ? `<div class="plan-box"><div class="plan-title">Recovery Plan</div>${planHtml}</div>` : ''}
+      ${actionsHtml}
+    </div>
+  </div>`;
+}
+
+function clearActiveEmpty() {
+  const el = document.getElementById('active-list');
+  const empty = el.querySelector('.empty');
+  if (empty) empty.remove();
+}
+
+function appendIncidentCard(run) {
+  clearActiveEmpty();
+  const el = document.getElementById('active-list');
+  el.insertAdjacentHTML('beforeend', buildIncidentCardHtml(run));
+}
+
+function removeIncidentCard(thread_id) {
+  const card = document.getElementById(`card-${thread_id}`);
+  if (card) card.remove();
+  if (!Object.keys(activeRuns).length) {
+    const el = document.getElementById('active-list');
+    el.innerHTML = `<div class="empty"><div class="empty-icon">📭</div>No active incidents.<br>Trigger a run above to start.</div>`;
+  }
+}
+
+function updateIncidentCard(run) {
+  const card = document.getElementById(`card-${run.thread_id}`);
+  if (!card) return;
+  const notesEl = document.getElementById(`notes-${run.thread_id}`);
+  if (notesEl) run._savedNotes = notesEl.value;
+  card.outerHTML = buildIncidentCardHtml(run);
+}
+
 function renderActive() {
   const el   = document.getElementById('active-list');
   const runs = Object.values(activeRuns);
+  const savedNotes = captureNotes();
 
-  // Update pending stat
-  const pending = runs.filter(r => r.status === 'pending_approval').length;
-  document.getElementById('stat-pending').textContent = pending;
+  updatePendingStat();
 
   if (!runs.length) {
     el.innerHTML = `<div class="empty"><div class="empty-icon">📭</div>No active incidents.<br>Trigger a run above to start.</div>`;
     return;
   }
 
-  el.innerHTML = runs.map(run => {
-    const isPending    = run.status === 'pending_approval';
-    const isProcessing = run.status === 'processing';
-    const isCompleted  = run.status === 'completed';
-    const cardClass    = isPending ? 'pending'
-      : isProcessing ? 'processing'
-      : isCompleted ? (run._decision === 'rejected' ? 'failed' : 'resolved')
-      : '';
-    const statusClass  = isPending ? 'status-pending'
-      : isProcessing ? 'status-running'
-      : isCompleted ? 'status-resolved'
-      : 'status-running';
-    const badgeClass   = isPending ? 'badge-pending'
-      : isProcessing ? 'badge-processing'
-      : 'badge-resolved';
-    const badgeText    = isPending ? 'awaiting approval'
-      : isProcessing ? 'processing'
-      : isCompleted ? (run._decision === 'approved' ? 'approved' : run._decision === 'rejected' ? 'rejected' : 'completed')
-      : 'running';
+  for (const run of runs) {
+    if (savedNotes[run.thread_id] !== undefined) {
+      run._savedNotes = savedNotes[run.thread_id];
+    }
+  }
 
-    const planHtml = (run.recovery_plan || []).map((step, i) => {
-      const isDanger = /alter|delete|drop|restart|terminate|truncate/i.test(step);
-      return `<div class="plan-step">
-        <span class="plan-step-num">${i+1}.</span>
-        <span class="plan-step-text ${isDanger ? 'danger' : ''}">${escHtml(step)}</span>
-      </div>`;
-    }).join('');
-
-    const riskHtml = run.risk_reason ? `
-      <div class="risk-box">
-        <span class="risk-icon">⚠</span>
-        <span>${escHtml(run.risk_reason)}</span>
-      </div>` : '';
-
-    const actionsHtml = isPending ? `
-      <div class="approval-actions">
-        <input id="notes-${run.thread_id}" class="notes-input" placeholder="Optional notes for the audit log..." />
-        <button class="btn btn-approve btn-sm" onclick="decide('${run.thread_id}', true)">Approve</button>
-        <button class="btn btn-reject btn-sm" onclick="decide('${run.thread_id}', false)">Reject</button>
-      </div>` : isProcessing ? `
-      <div class="processing-box">
-        <span class="spin"></span>
-        <span>${run._decision === 'approved'
-          ? 'Approved — running execution, audit agent, and saving to history...'
-          : 'Rejected — writing audit log and saving to history...'}</span>
-      </div>` : `<div style="font-size:11px;color:var(--muted)">
-        ${isCompleted ? 'Decision recorded — syncing history...' : '<span class="spin"></span>Processing...'}
-      </div>`;
-
-    return `
-    <div class="incident-card ${cardClass}">
-      <div class="card-header" onclick="toggleCard('${run.thread_id}')">
-        <div class="card-left">
-          <div class="card-status ${statusClass}"></div>
-          <div class="card-pipeline">${escHtml(run.pipeline || run.pipeline_name || '—')}</div>
-          <span class="badge badge-type">${escHtml(run.failure_type || '—')}</span>
-          <span class="badge ${badgeClass}">${badgeText}</span>
-        </div>
-        <div class="card-right">
-          <span style="color:var(--red);font-size:11px">${run.risk_level === 'high' ? '⚠ HIGH RISK' : ''}</span>
-          <span style="font-family:var(--mono);font-size:10px;color:var(--dim)">${run.thread_id.substring(0,8)}...</span>
-          <span>▾</span>
-        </div>
-      </div>
-      <div class="card-body ${isPending ? 'open' : ''}" id="body-${run.thread_id}">
-        ${riskHtml}
-        ${planHtml ? `<div class="plan-box"><div class="plan-title">Recovery Plan</div>${planHtml}</div>` : ''}
-        ${actionsHtml}
-      </div>
-    </div>`;
-  }).join('');
+  el.innerHTML = runs.map(buildIncidentCardHtml).join('');
+  restoreNotes(savedNotes);
 }
 
 function toggleCard(id) {
   const body = document.getElementById(`body-${id}`);
-  if (body) body.classList.toggle('open');
+  if (!body) return;
+  body.classList.toggle('open');
+  if (body.classList.contains('open')) openCardIds.add(id);
+  else openCardIds.delete(id);
 }
 
 // ── HISTORY TABLE ─────────────────────────────────────────────────────────────
@@ -1119,6 +1204,11 @@ async function loadStats() {
 function escHtml(str) {
   if (!str) return '';
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function escAttr(str) {
+  if (!str) return '';
+  return escHtml(str).replace(/"/g, '&quot;');
 }
 
 function sleep(ms) {
