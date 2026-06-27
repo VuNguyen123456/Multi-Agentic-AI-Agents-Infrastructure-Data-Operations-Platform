@@ -8,7 +8,7 @@ Built from scratch as a learning and portfolio project. Every architectural deci
 
 ### Video Walkthrough
 
-<a href="https://www.loom.com/share/3a0cc0f20e1944de96d1efba4a491a01" target="_blank">▶ Watch the 3-minute demo</a> — Azure ingest → agent reasoning → human approval → execution → audit log
+<a href="https://www.loom.com/share/3a0cc0f20e1944de96d1efba4a491a01" target="_blank">▶ Watch the 5-minute demo</a> — Azure ingest → agent reasoning → human approval → execution → audit log
 
 ---
 
